@@ -271,10 +271,10 @@ export default function AppShellClient({
     // al entrar a reportes específicos (IT/Mantenimiento). El centro
     // de reportes debe permanecer bajo el contexto de admin visual.
     if (pathname.startsWith('/reports')) return 'admin'
+    if (pathname.startsWith('/audit')) return 'admin'
     if (
       pathname.startsWith('/dashboard') ||
       pathname.startsWith('/tickets') ||
-      pathname.startsWith('/audit') ||
       pathname.startsWith('/beo') ||
       pathname.startsWith('/assets')
     )
