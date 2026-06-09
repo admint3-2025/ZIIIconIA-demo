@@ -343,14 +343,29 @@ export class InspectionGSHPDFGenerator {
   }
 
   private addPerformanceChart(inspection: InspectionGSH): void {
+    const ellipsizeToWidth = (text: string, maxWidth: number): string => {
+      if (this.doc.getTextWidth(text) <= maxWidth) return text
+      const ellipsis = '…'
+      const available = Math.max(0, maxWidth - this.doc.getTextWidth(ellipsis))
+      if (available <= 0) return ellipsis
+      let low = 0
+      let high = text.length
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2)
+        const candidate = text.slice(0, mid)
+        if (this.doc.getTextWidth(candidate) <= available) low = mid
+        else high = mid - 1
+      }
+      return `${text.slice(0, Math.max(0, low))}${ellipsis}`
+    }
+
     // Título de sección
     this.doc.setTextColor(30, 41, 59)
     this.doc.setFontSize(11)
     this.doc.setFont('helvetica', 'bold')
-    this.doc.text('DESEMPEÑO POR ÁREAS', this.margin, this.currentY)
+    this.doc.text('RESUMEN EJECUTIVO', this.margin, this.currentY)
     this.currentY += 8
 
-    // Datos
     const total = Math.max(1, inspection.total_items || 0)
     const cumple = inspection.items_cumple || 0
     const noCumple = inspection.items_no_cumple || 0
@@ -362,176 +377,115 @@ export class InspectionGSHPDFGenerator {
     const complianceBase = cumple + noCumple
     const compliancePct = complianceBase > 0 ? Math.round((cumple / complianceBase) * 100) : 0
 
-    // Ensure pending is considered in report computations (avoid unused-var lint)
-    const pendingPct = total > 0 ? Math.round((pending / total) * 100) : 0
-    void pendingPct
-
     const areas = inspection.areas || []
-    const totalAreas = Math.max(1, areas.length || inspection.total_areas || 0)
-
-    const getAreaColor = (score: number): readonly [number, number, number] =>
-      score >= 9
-        ? ([16, 185, 129] as const)
-        : score >= 8
-          ? ([59, 130, 246] as const)
-          : score >= 7
-            ? ([245, 158, 11] as const)
-            : ([239, 68, 68] as const)
-
-    let criticalCount = 0
-    for (const area of inspection.areas || []) {
-      for (const item of area.items || []) {
-        if (typeof item.calif_valor === 'number' && item.calif_valor > 0 && item.calif_valor < 8) {
-          criticalCount += 1
-        }
+    const areaSummaries = areas.map((area) => {
+      const items = area.items || []
+      const areaCumple = items.filter((i) => i.cumplimiento_valor === 'Cumple')
+      const areaNoCumple = items.filter((i) => i.cumplimiento_valor === 'No Cumple').length
+      const areaNA = items.filter((i) => i.cumplimiento_valor === 'N/A').length
+      const areaPending = items.filter((i) => !i.cumplimiento_valor).length
+      const score = areaCumple.length > 0
+        ? areaCumple.reduce((acc, item) => acc + (item.calif_valor || 0), 0) / areaCumple.length
+        : 0
+      return {
+        name: area.area_name,
+        score,
+        evaluated: areaCumple.length + areaNoCumple + areaNA,
+        pending: areaPending
       }
-    }
+    })
 
-    // Conteo por banda de score (para leyenda)
-    const areaBands = {
-      excellent: { label: 'Excelente (≥9)', color: [16, 185, 129] as const, count: 0 },
-      good: { label: 'Bueno (8–8.99)', color: [59, 130, 246] as const, count: 0 },
-      regular: { label: 'Regular (7–7.99)', color: [245, 158, 11] as const, count: 0 },
-      critical: { label: 'Crítico (<7)', color: [239, 68, 68] as const, count: 0 }
-    }
+    const criticalAreas = areaSummaries
+      .filter((area) => area.evaluated > 0 && area.score < 8)
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 2)
 
-    for (const area of areas) {
-      const score = area.calculated_score || 0
-      if (score >= 9) areaBands.excellent.count += 1
-      else if (score >= 8) areaBands.good.count += 1
-      else if (score >= 7) areaBands.regular.count += 1
-      else areaBands.critical.count += 1
-    }
+    const pendingAreas = areaSummaries
+      .filter((area) => area.pending > 0)
+      .sort((a, b) => b.pending - a.pending)
+      .slice(0, 2)
 
-    const legendBands = [
-      areaBands.excellent,
-      areaBands.good,
-      areaBands.regular,
-      areaBands.critical
-    ].filter((b) => b.count > 0)
-
-    // Layout: donut + leyenda + métricas
-    const sectionHeight = 44
     const cardX = this.margin
     const cardY = this.currentY
     const cardW = this.pageWidth - 2 * this.margin
-    const cardH = sectionHeight
+    const cardH = 44
 
-    // Card container
     this.doc.setFillColor(248, 250, 252)
     this.doc.setDrawColor(226, 232, 240)
     this.doc.setLineWidth(0.5)
     this.doc.roundedRect(cardX, cardY, cardW, cardH, 2, 2, 'FD')
 
-    // Donut
-    const cx = cardX + 26
-    const cy = cardY + 22
-    const radius = 14.5
-    const thickness = 6
+    const leftX = cardX + 6
+    const rightX = cardX + cardW / 2 + 4
+    const baseY = cardY + 10
+    const lineGap = 6
 
-    const anyDoc = this.doc as any
-    if (typeof anyDoc.setLineCap === 'function') anyDoc.setLineCap(1)
-    if (typeof anyDoc.setLineJoin === 'function') anyDoc.setLineJoin(1)
+    this.doc.setTextColor(30, 41, 59)
+    this.doc.setFont('helvetica', 'bold')
+    this.doc.setFontSize(9)
+    this.doc.text('Indicadores', leftX, baseY)
 
-    // Base ring
-    this.doc.setDrawColor(226, 232, 240)
-    this.doc.setLineWidth(thickness)
-    this.doc.circle(cx, cy, radius, 'S')
+    this.doc.setFont('helvetica', 'normal')
+    this.doc.setFontSize(8)
+    this.doc.setTextColor(71, 85, 105)
+    this.doc.text('Cobertura:', leftX, baseY + lineGap)
+    this.doc.text('Cumplimiento:', leftX, baseY + lineGap * 2)
+    this.doc.text('Pendientes:', leftX, baseY + lineGap * 3)
+    this.doc.text('Incumplimientos:', leftX, baseY + lineGap * 4)
 
-    // Colored segments (un segmento por área)
-    let cursor = -90 // start at top
-    const sweepPerArea = 360 / totalAreas
-    if (areas.length > 0) {
-      for (const area of areas) {
-        const score = area.calculated_score || 0
-        const color = getAreaColor(score)
-        this.drawArcSegment(cx, cy, radius, cursor, cursor + sweepPerArea, color, thickness)
-        cursor += sweepPerArea
-      }
+    this.doc.setFont('helvetica', 'bold')
+    this.doc.setTextColor(30, 41, 59)
+    this.doc.text(`${coveragePct}% (${evaluated}/${total})`, leftX + 24, baseY + lineGap)
+    this.doc.text(`${compliancePct}% (base ${complianceBase})`, leftX + 24, baseY + lineGap * 2)
+    this.doc.text(String(pending), leftX + 24, baseY + lineGap * 3)
+    this.doc.setTextColor(noCumple > 0 ? 239 : 30, noCumple > 0 ? 68 : 41, noCumple > 0 ? 68 : 59)
+    this.doc.text(String(noCumple), leftX + 24, baseY + lineGap * 4)
+
+    const maxLabelWidth = cardW / 2 - 12
+    const listStartY = baseY + lineGap
+
+    this.doc.setFont('helvetica', 'bold')
+    this.doc.setTextColor(30, 41, 59)
+    this.doc.text('Áreas críticas', rightX, baseY)
+    this.doc.setFont('helvetica', 'normal')
+    this.doc.setFontSize(8)
+    this.doc.setTextColor(71, 85, 105)
+
+    if (criticalAreas.length === 0) {
+      this.doc.text('Sin áreas críticas', rightX, listStartY)
     } else {
-      // Fallback: si no vienen áreas cargadas, mostramos el anillo completo en gris
-      this.drawArcSegment(cx, cy, radius, -90, 270, [203, 213, 225] as const, thickness)
+      criticalAreas.forEach((area, idx) => {
+        const label = ellipsizeToWidth(`• ${area.name}`, maxLabelWidth)
+        this.doc.text(label, rightX, listStartY + idx * lineGap)
+        this.doc.setTextColor(239, 68, 68)
+        this.doc.setFont('helvetica', 'bold')
+        this.doc.text(area.score.toFixed(1), rightX + maxLabelWidth + 2, listStartY + idx * lineGap, { align: 'right' })
+        this.doc.setFont('helvetica', 'normal')
+        this.doc.setTextColor(71, 85, 105)
+      })
     }
 
-    // Inner cutout (helps hide segment joins and makes it feel like a donut)
-    const innerRadius = Math.max(1, radius - thickness / 2 + 0.4)
-    this.doc.setFillColor(255, 255, 255)
-    this.doc.circle(cx, cy, innerRadius, 'F')
-
-    // Center text
-    this.doc.setTextColor(30, 41, 59)
-    this.doc.setFont('helvetica', 'bold')
-    this.doc.setFontSize(8)
-    this.doc.text('ÁREAS', cx, cy - 4, { align: 'center' })
-    this.doc.setFontSize(14)
-    this.doc.text(String(areas.length || inspection.total_areas || 0), cx, cy + 3.5, { align: 'center' })
-    this.doc.setFont('helvetica', 'normal')
-    this.doc.setTextColor(100, 116, 139)
-    this.doc.setFontSize(7)
-    this.doc.text(`Prom: ${(inspection.average_score || 0).toFixed(1)}`, cx, cy + 9, { align: 'center' })
-
-    // Métricas (derecha)
-    const rightX = cardX + 52
-    const rightY = cardY + 10
-    const lineGap = 7
-
-    this.doc.setTextColor(30, 41, 59)
-    this.doc.setFont('helvetica', 'bold')
-    this.doc.setFontSize(9)
-    this.doc.text('Resumen', rightX, rightY)
-
-    this.doc.setFont('helvetica', 'normal')
-    this.doc.setTextColor(71, 85, 105)
-    this.doc.setFontSize(8)
-
-    // Cobertura
-    this.doc.text('Cobertura:', rightX, rightY + lineGap)
+    const pendingTitleY = baseY + lineGap * 3
     this.doc.setFont('helvetica', 'bold')
     this.doc.setTextColor(30, 41, 59)
-    this.doc.text(`${coveragePct}%`, rightX + 18, rightY + lineGap)
-    this.doc.setFont('helvetica', 'normal')
-    this.doc.setTextColor(100, 116, 139)
-    this.doc.text(`(${evaluated}/${total})`, rightX + 28, rightY + lineGap)
-
-    // Cumplimiento
-    this.doc.setTextColor(71, 85, 105)
-    this.doc.text('Cumplimiento:', rightX, rightY + lineGap * 2)
-    const complianceColor = compliancePct >= 80 ? ([16, 185, 129] as const) : ([239, 68, 68] as const)
-    this.doc.setFont('helvetica', 'bold')
-    this.doc.setTextColor(complianceColor[0], complianceColor[1], complianceColor[2])
-    this.doc.text(`${compliancePct}%`, rightX + 22, rightY + lineGap * 2)
-    this.doc.setFont('helvetica', 'normal')
-    this.doc.setTextColor(100, 116, 139)
-    this.doc.text(`(base: ${complianceBase})`, rightX + 32, rightY + lineGap * 2)
-
-    // Críticos
-    this.doc.setTextColor(71, 85, 105)
-    this.doc.text('Críticos (<8):', rightX, rightY + lineGap * 3)
-    this.doc.setFont('helvetica', 'bold')
-    if (criticalCount > 0) this.doc.setTextColor(239, 68, 68)
-    else this.doc.setTextColor(16, 185, 129)
-    this.doc.text(String(criticalCount), rightX + 24, rightY + lineGap * 3)
-
-    // Leyenda (derecha)
-    const legendX = cardX + cardW - 62
-    let legendY = cardY + 11
-
-    this.doc.setTextColor(30, 41, 59)
-    this.doc.setFont('helvetica', 'bold')
-    this.doc.setFontSize(9)
-    this.doc.text('Detalle', legendX, legendY)
-    legendY += 6
-
+    this.doc.text('Áreas con pendientes', rightX, pendingTitleY)
     this.doc.setFont('helvetica', 'normal')
     this.doc.setFontSize(8)
-    for (const band of legendBands) {
-      const pct = Math.round((band.count / totalAreas) * 100)
-      const [r, g, b] = band.color
-      this.doc.setFillColor(r, g, b)
-      this.doc.circle(legendX + 1.5, legendY - 1.5, 1.2, 'F')
-      this.doc.setTextColor(71, 85, 105)
-      this.doc.text(`${band.label}: ${band.count} (${pct}%)`, legendX + 5, legendY)
-      legendY += 5
+    this.doc.setTextColor(71, 85, 105)
+
+    const pendingListY = pendingTitleY + 5
+    if (pendingAreas.length === 0) {
+      this.doc.text('Sin pendientes', rightX, pendingListY)
+    } else {
+      pendingAreas.forEach((area, idx) => {
+        const label = ellipsizeToWidth(`• ${area.name}`, maxLabelWidth)
+        this.doc.text(label, rightX, pendingListY + idx * lineGap)
+        this.doc.setTextColor(217, 119, 6)
+        this.doc.setFont('helvetica', 'bold')
+        this.doc.text(String(area.pending), rightX + maxLabelWidth + 2, pendingListY + idx * lineGap, { align: 'right' })
+        this.doc.setFont('helvetica', 'normal')
+        this.doc.setTextColor(71, 85, 105)
+      })
     }
 
     this.currentY = cardY + cardH + 6

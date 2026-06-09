@@ -1561,6 +1561,22 @@ export default function InspectionDashboard({
       if (cumpleItems.length === 0) return 0
       return cumpleItems.reduce((acc, item) => acc + item.calif_valor, 0) / cumpleItems.length
     })
+
+    const areaSummaries = inspectionData.map((area, idx) => {
+      const pending = area.items.filter(item => !item.cumplimiento_valor).length
+      const noCumple = area.items.filter(item => item.cumplimiento_valor === 'No Cumple').length
+      const cumple = area.items.filter(item => item.cumplimiento_valor === 'Cumple').length
+      const na = area.items.filter(item => item.cumplimiento_valor === 'N/A').length
+      const evaluated = cumple + noCumple + na
+      return {
+        name: area.area,
+        score: areaScores[idx] * 10,
+        pending,
+        noCumple,
+        evaluated,
+        total: area.items.length
+      }
+    })
     
     const totalAreas = inspectionData.length
     const totalItems = inspectionData.reduce((acc, area) => acc + area.items.length, 0)
@@ -1616,7 +1632,8 @@ export default function InspectionDashboard({
       coveragePercentage,
       compliancePercentage,
       averagePercentage, perfectAreas, goodAreas, alertAreas, criticalAreas, 
-      areaScores, barChartData, pieData, cumplimientoPie, trendData 
+      areaScores, barChartData, pieData, cumplimientoPie, trendData,
+      areaSummaries
     }
   }, [inspectionData, propTrendData])
 
@@ -1701,21 +1718,77 @@ export default function InspectionDashboard({
         />
         </div>
 
-      {/* Gráficos: Torta + Evaluaciones */}
+      {/* Resumen Ejecutivo + Evaluaciones */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        {/* Torta Interactiva - Promedio Global */}
+        {/* Resumen Ejecutivo */}
         <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
-            <h3 className="text-sm font-semibold text-slate-700">Desempeño General</h3>
+            <h3 className="text-sm font-semibold text-slate-700">Resumen Ejecutivo</h3>
           </div>
-          <div className="p-6">
-            <OverallPerformanceDonut
-              totalItems={stats.totalItems}
-              cumple={stats.totalCumple}
-              noCumple={stats.totalNoCumple}
-              na={stats.totalNA}
-              pending={stats.totalPending}
-            />
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Cobertura</div>
+                <div className="text-2xl font-bold text-slate-800 mt-1">{stats.coveragePercentage}%</div>
+                <div className="text-[11px] text-slate-500">{stats.evaluatedItems}/{stats.totalItems} evaluados</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Cumplimiento</div>
+                <div className="text-2xl font-bold text-slate-800 mt-1">{stats.compliancePercentage}%</div>
+                <div className="text-[11px] text-slate-500">Base: {stats.totalCumple + stats.totalNoCumple}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Pendientes</div>
+                <div className="text-2xl font-bold text-slate-800 mt-1">{stats.totalPending}</div>
+                <div className="text-[11px] text-slate-500">Sin evaluar</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Incumplimientos</div>
+                <div className={`text-2xl font-bold mt-1 ${stats.totalNoCumple > 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                  {stats.totalNoCumple}
+                </div>
+                <div className="text-[11px] text-slate-500">Total no cumple</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Áreas críticas</div>
+                <div className="mt-2 space-y-1">
+                  {stats.areaSummaries
+                    .filter((area) => area.score > 0 && area.score < 80)
+                    .sort((a, b) => a.score - b.score)
+                    .slice(0, 3)
+                    .map((area) => (
+                      <div key={area.name} className="flex items-center justify-between text-xs text-slate-700">
+                        <span className="truncate">{area.name}</span>
+                        <span className="font-semibold text-red-600">{area.score.toFixed(0)}</span>
+                      </div>
+                    ))}
+                  {stats.areaSummaries.filter((area) => area.score > 0 && area.score < 80).length === 0 && (
+                    <div className="text-xs text-slate-400">Sin áreas críticas</div>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Áreas con pendientes</div>
+                <div className="mt-2 space-y-1">
+                  {stats.areaSummaries
+                    .filter((area) => area.pending > 0)
+                    .sort((a, b) => b.pending - a.pending)
+                    .slice(0, 3)
+                    .map((area) => (
+                      <div key={area.name} className="flex items-center justify-between text-xs text-slate-700">
+                        <span className="truncate">{area.name}</span>
+                        <span className="font-semibold text-amber-600">{area.pending}</span>
+                      </div>
+                    ))}
+                  {stats.areaSummaries.filter((area) => area.pending > 0).length === 0 && (
+                    <div className="text-xs text-slate-400">Sin pendientes</div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
